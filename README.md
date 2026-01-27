@@ -1,49 +1,52 @@
-# UNO-RL
+# UNO-RL: Reinforcement Learning Environment for UNO
 
-A UNO game implementation in Python, inspired by "Pig Kingdom Legends" (Zhuguosha) architecture.
+An interactive UNO game environment supporting Human vs AI play, designed for Reinforcement Learning experiments. This project features a CLI-based interactive game loop where you can play against a Rule-based AI and a Deep Q-Learning (RL) Agent.
 
-## Project Overview
+## 📖 Documentation (文档指南)
 
-This project implements the core logic of the UNO card game. It is designed with a separate backend structure to support future UI development (Pygame) and AI reinforcement learning experiments.
+Before you start, we highly recommend reading the following guides:
 
-## Architecture
+*   **[📜 Game Rules (游戏规则)](uno_rule.md)**
+    *   Detailed explanation of UNO rules, card effects, and the special "+4 Challenge" mechanics.
+*   **[🎮 Controls & AI Logic (操作与AI逻辑)](control_introduction.md)**
+    *   How to control the game via terminal.
+    *   Introduction to the AI opponents: Alice, Charlie, and Bob.
 
-The project follows a modular design:
+## 🚀 Quick Start
 
-### Backend (`backend/`)
-- **Card (`backend/card.py`)**: Defines the `Card` class with color, type, and value properties.
-- **Deck (`backend/deck.py`)**: Manages the draw pile and discard pile, including shuffling and reshuffling.
-- **Player (`backend/player.py`)**: Represents a player (Human or AI), holding hand cards and status (e.g., "UNO" call).
-- **GameManager (`backend/game_manager.py`)**: The central controller that manages the game loop, turn logic, rule validation, and card effects.
-
-### Config (`config/`)
-- **Enums (`config/enums.py`)**: Defines `CardColor`, `CardType`, `PlayerType`, etc.
-- **Settings (`config/settings.py`)**: Game constants and rules.
-
-## Usage
-
-To run a console-based simulation of the game:
+To start a game in the terminal:
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:/path/to/UNO-RL
+# Ensure you are in the project root
 python3 main.py
+```
+
+## 🏗️ Architecture & Features
+
+The project follows a modular design separating game logic from agent implementations:
+
+*   **Interactive Terminal UI**: Color-coded card display, clear action logs, and menu-based input.
+*   **Backend (`backend/`)**: Core game engine (Deck, Card, GameManager, Player). Handles state, turns, and rule enforcement.
+*   **Agents**:
+    - **HumanBack**: Direct control for human players via CLI.
+    - **SimpleAI**: Heuristic-based bot (always plays, challenges randomly).
+    - **RLPlayer**: DQN-based agent trained to optimize win rate.
+
+## 🛠️ Development
+
+### Training the Agent
+To run the training loop:
+```bash
+python3 train.py
 ```
 
 ## Features Implemented (Backend)
 
 - [x] Full 108 card deck generation.
-- [x] Shuffling and dealing.
-- [x] Draw pile and Discard pile management with auto-reshuffle.
 - [x] Turn management (Clockwise/Counter-clockwise).
 - [x] Legal move validation (Color match, Number match, Type match, Wild logic).
-- [x] Action cards effects:
-    - Skip
-    - Reverse
-    - Draw Two
-    - Wild (Change Color)
-    - Wild Draw Four
-- [x] "UNO" shout status tracking.
-- [x] Win condition detection.
+- [x] Action cards effects (Skip, Reverse, Draw Two, Wild, Wild Draw Four).
+- [x] **"Challenge" System (质疑)** for +4 cards.
 
 ## Future Plans
 
