@@ -55,8 +55,7 @@ class GameManager:
         else:
             self.current_color = start_card.color
 
-        # Handle initial card effect if it's Action card
-        self._handle_initial_card_effect(start_card)
+        return start_card # Return start_card so main can display it
 
     def _handle_initial_card_effect(self, card: Card):
         if card.card_type == CardType.SKIP:

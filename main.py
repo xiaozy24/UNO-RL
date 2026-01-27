@@ -8,6 +8,17 @@ from backend.utils.colors import get_colored_text, TermColors
 import random
 import re
 
+def print_interactive_msg(msg: str):
+    """Print a message padded to the standard table width (54 chars including separators)."""
+    # Standard line: 25 + 3 + 10 + 3 + 4 + 3 + 6 = 54
+    total_len = 54
+    # Strip ANSI codes for length calculation
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    plain_msg = ansi_escape.sub('', msg)
+    
+    padding = max(0, total_len - len(plain_msg))
+    print(f"{msg}{'-' * padding}")
+
 def main():
     # Start logging session
     log_path = game_logger.start_game_session()
@@ -15,17 +26,20 @@ def main():
 
     # 1. Setup Players
     # One Human, One Simple AI, One RL AI
-    p1 = Player(1, "Alice (Human)", PlayerType.HUMAN)
+    p1 = Player(1, "Alice (HumanBack)", PlayerType.HUMAN)
     p2 = RLPlayer(2, "Bob (RL)", model_path=None) # Initialize with random weights
     p3 = Player(3, "Charlie (Simple AI)", PlayerType.AI)
     players = [p1, p2, p3]
 
     # 2. Initialize Game
     gm = GameManager(players)
-    gm.start_game()
+    start_card = gm.start_game()
     
     # Header
     print(f"{'Name':-<25} | {'Action':-<10} | {'Hand':-<4} | {'Color':-<6}")
+
+    # Display First Card
+    print_interactive_msg(f"[First Card]{{{start_card}}}")
 
     # 3. Game Loop
     turn_count = 0
@@ -77,30 +91,119 @@ def main():
                 action_desc = "Drawing"
                 
         else:
-            # --- Human Logic (Simulated for now, acting as Simple AI) ---
-            # In a real game, this would wait for Input.
-            # Keeping simulation behavior for Alice as requested "Simple control" equivalent for now 
-            # or should I implement input()? 
-            # User said "retain existing Human control". Existing was a simulation loop.
-            # I will keep it auto for "Alice" as per previous script behavior.
-            
-            playable_card = None
-            for card in current_player.hand:
-                if gm.check_legal_play(card, top_card):
-                    playable_card = card
-                    break
-            
-            if playable_card:
-                wild_color = None
-                if playable_card.color == CardColor.WILD:
-                    wild_color = CardColor.RED 
-                
-                card_str = str(playable_card)
-                gm.play_card(current_player, playable_card, wild_color)
-                action_desc = card_str
+            # --- HumanBack Logic ---
+            # Interaction Logic
+            if gm.skipped_player == current_player: # Although skipped player usually doesn't reach here
+                print_interactive_msg("[Skipped]")
             else:
-                gm.draw_card_action(current_player)
-                action_desc = "Drawing"
+                legal_cards = [c for c in current_player.hand if gm.check_legal_play(c, top_card)]
+                
+                if legal_cards:
+                    # Construct available cards string
+                    # Add 0. Skip option
+                    card_options = [f"{i+1}. {c}" for i, c in enumerate(legal_cards)]
+                    cards_str = "0. Skip, " + ", ".join(card_options)
+                    print_interactive_msg(f"[Available Cards]{{{cards_str}}}")
+                    
+                    while True:
+                        try:
+                            user_input = input("Input:")
+                            choice = int(user_input)
+                            
+                            # CHOICE 0: SKIP & DRAW
+                            if choice == 0:
+                                drawn_card = gm.deck.draw_card()
+                                if drawn_card:
+                                    current_player.add_card(drawn_card)
+                                    print_interactive_msg(f"[Skip and Draw]{{{drawn_card}}}")
+                                    
+                                    if gm.check_legal_play(drawn_card, top_card):
+                                        print_interactive_msg("[Use?]{1. Yes, 2. No}")
+                                        while True:
+                                            try:
+                                                use_input = input("Input:")
+                                                use_choice = int(use_input)
+                                                if use_choice == 1:
+                                                    # Play the drawn card
+                                                    wild_color = None
+                                                    if drawn_card.color == CardColor.WILD:
+                                                        colors = [CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW]
+                                                        colored_options = [f"{i+1}. {get_colored_text(c.value, c.value)}" for i, c in enumerate(colors)]
+                                                        options_str = ", ".join(colored_options)
+                                                        print_interactive_msg(f"[Choose Color]{{{options_str}}}")
+                                                        while True:
+                                                            try:
+                                                                color_input = input("Input:")
+                                                                c_choice = int(color_input)
+                                                                if 1 <= c_choice <= 4:
+                                                                    wild_color = colors[c_choice - 1]
+                                                                    break
+                                                                print_interactive_msg("[Illegal Input]")
+                                                            except ValueError:
+                                                                print_interactive_msg("[Illegal Input]")
+                                                    
+                                                    gm.play_card(current_player, drawn_card, wild_color)
+                                                    action_desc = str(drawn_card)
+                                                    break
+                                                elif use_choice == 2:
+                                                    # Keep card, pass turn
+                                                    gm._advance_turn()
+                                                    action_desc = "Drawing"
+                                                    break
+                                                else:
+                                                    print_interactive_msg("[Illegal Input]")
+                                            except ValueError:
+                                                print_interactive_msg("[Illegal Input]")
+                                    else:
+                                        # Cannot play drawn card
+                                        gm._advance_turn()
+                                        action_desc = "Drawing"
+                                else:
+                                    # Deck empty (rare/handled usually)
+                                    gm._advance_turn()
+                                    action_desc = "Drawing"
+                                break
+
+                            elif 1 <= choice <= len(legal_cards):
+                                card = legal_cards[choice - 1]
+                                
+                                # Wild Color Selection
+                                wild_color = None
+                                if card.color == CardColor.WILD:
+                                    colors = [CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW]
+                                    # Format options with colors
+                                    colored_options = [f"{i+1}. {get_colored_text(c.value, c.value)}" for i, c in enumerate(colors)]
+                                    options_str = ", ".join(colored_options)
+                                    print_interactive_msg(f"[Choose Color]{{{options_str}}}")
+
+                                    while True:
+                                        try:
+                                            color_input = input("Input:")
+                                            c_choice = int(color_input)
+                                            if 1 <= c_choice <= 4:
+                                                wild_color = colors[c_choice - 1]
+                                                break
+                                            else:
+                                                print_interactive_msg("[Illegal Input]")
+                                        except ValueError:
+                                            print_interactive_msg("[Illegal Input]") 
+
+                                card_str = str(card)
+                                gm.play_card(current_player, card, wild_color)
+                                action_desc = card_str
+                                break
+                            else:
+                                print_interactive_msg("[Illegal Input]")
+                        except ValueError:
+                            print_interactive_msg("[Illegal Input]")
+                else:
+                    # No legal moves -> Auto draw
+                    gm.draw_card_action(current_player)
+                    action_desc = "Drawing"
+            
+            # --- HumanFront Logic (Empty) ---
+            # Waiting for completion
+            pass
 
         # --- Output & Post-Turn ---
         current_color = gm.current_color
