@@ -5,6 +5,8 @@ class TermColors:
     BLUE = '\033[94m'
     MAGENTA = '\033[95m'
     CYAN = '\033[96m'
+    ORANGE = '\033[38;5;208m'
+    BROWN = '\033[38;5;94m'
     RESET = '\033[0m'
     BOLD = '\033[1m'
 

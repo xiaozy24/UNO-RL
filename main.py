@@ -4,8 +4,9 @@ from backend.rl_player import RLPlayer
 from backend.game_manager import GameManager
 from config.enums import PlayerType, CardColor
 from backend.utils.logger import game_logger
-from backend.utils.colors import get_colored_text
+from backend.utils.colors import get_colored_text, TermColors
 import random
+import re
 
 def main():
     # Start logging session
@@ -22,6 +23,9 @@ def main():
     # 2. Initialize Game
     gm = GameManager(players)
     gm.start_game()
+    
+    # Header
+    print(f"{'Name':-<25} | {'Action':-<10} | {'Hand':-<4} | {'Color':-<6}")
 
     # 3. Game Loop
     turn_count = 0
@@ -30,7 +34,7 @@ def main():
         top_card = gm.deck.peek_discard_pile()
         
         # Determine Action based on Player Type
-        action_text = ""
+        action_desc = ""
         
         # UNO Shout Check (Pre-move)
         if current_player.get_hand_size() == 2:
@@ -47,10 +51,10 @@ def main():
                 color = action.get('color')
                 card_str = str(card)
                 gm.play_card(current_player, card, color)
-                action_text = f"{current_player.name} {card_str}"
+                action_desc = card_str
             else:
                 gm.draw_card_action(current_player)
-                action_text = f"{current_player.name} drawing"
+                action_desc = "Drawing"
                 
         elif current_player.player_type == PlayerType.AI:
             # --- Simple AI Logic ---
@@ -67,10 +71,10 @@ def main():
                 
                 card_str = str(playable_card)
                 gm.play_card(current_player, playable_card, wild_color)
-                action_text = f"{current_player.name} {card_str}"
+                action_desc = card_str
             else:
                 gm.draw_card_action(current_player)
-                action_text = f"{current_player.name} drawing"
+                action_desc = "Drawing"
                 
         else:
             # --- Human Logic (Simulated for now, acting as Simple AI) ---
@@ -93,22 +97,48 @@ def main():
                 
                 card_str = str(playable_card)
                 gm.play_card(current_player, playable_card, wild_color)
-                action_text = f"{current_player.name} {card_str}"
+                action_desc = card_str
             else:
                 gm.draw_card_action(current_player)
-                action_text = f"{current_player.name} drawing"
+                action_desc = "Drawing"
 
         # --- Output & Post-Turn ---
         current_color = gm.current_color
-        current_color_str = "None"
-        if current_color:
-            current_color_str = get_colored_text(current_color.value, current_color.value)
+        current_color_val = current_color.value if current_color else "None"
+        current_color_str = get_colored_text(current_color_val, current_color_val) if current_color else "None"
         
-        print(f"{action_text} | {current_player.get_hand_size()} | {current_color_str}")
+        display_action = action_desc.replace("Draw Two", "+2").replace("Draw Four", "+4").replace("Reverse", "~").replace("Skip", "!")
+
+        # Format: Name (25) | Action (10) | Hand (4) | Color (6)
+        p_str = f"{current_player.name:-<25}"
+        
+        # Action Coloring (Drawing -> Orange)
+        # Calculate padding based on visible length (stripping ANSI codes)
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+        plain_action = ansi_escape.sub('', display_action)
+        a_pad = "-" * max(0, 10 - len(plain_action))
+
+        if plain_action == "Drawing":
+            a_str = f"{TermColors.ORANGE}{plain_action}{TermColors.RESET}{a_pad}"
+        else:
+            a_str = f"{display_action}{a_pad}"
+
+        h_str = f"{str(current_player.get_hand_size()):-<4}"
+        
+        c_pad = "-" * max(0, 6 - len(current_color_val))
+        c_str = f"{current_color_str}{c_pad}"
+        
+        print(f"{p_str} | {a_str} | {h_str} | {c_str}")
 
         if gm.skipped_player:
-             # Just checking if skipped_player works needs name
-             print(f"{gm.skipped_player.name} skipped | {gm.skipped_player.get_hand_size()} | {current_color_str}")
+            sp_str = f"{gm.skipped_player.name:-<25}"
+            # Skipped -> Brown
+            s_text = "Skipped"
+            s_pad = "-" * max(0, 10 - len(s_text))
+            sa_str = f"{TermColors.BROWN}{s_text}{TermColors.RESET}{s_pad}"
+            
+            sh_str = f"{str(gm.skipped_player.get_hand_size()):-<4}"
+            print(f"{sp_str} | {sa_str} | {sh_str} | {c_str}")
 
         turn_count += 1
         time.sleep(0.1)
