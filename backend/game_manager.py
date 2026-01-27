@@ -19,6 +19,10 @@ class GameManager:
         self.game_over = False
         self.winner: Optional[Player] = None
         self.skipped_player: Optional[Player] = None
+        # Optional callback for +4 challenge: fn(victim_player, previous_color) -> bool
+        self.challenge_decider = None
+        self.pending_wild_draw_four = None
+        self.last_challenge_result = None
 
     def start_game(self):
         """Initialize game state, deal cards."""
@@ -128,6 +132,7 @@ class GameManager:
             return False
 
         top_card = self.deck.peek_discard_pile()
+        
         if not self.check_legal_play(card, top_card):
             game_logger.warning(f"Illegal move by {player.name}: {card} on {top_card} (active color: {self.current_color})")
             return False
@@ -151,13 +156,14 @@ class GameManager:
             return True
 
         # Update State based on Card
-        self._apply_card_effect(card, wild_color_choice)
+        previous_color = self.current_color
+        self._apply_card_effect(card, wild_color_choice, previous_color)
         
         # Next Turn
         self._advance_turn()
         return True
 
-    def _apply_card_effect(self, card: Card, wild_color_choice: CardColor):
+    def _apply_card_effect(self, card: Card, wild_color_choice: CardColor, previous_color: CardColor):
         # Update current color
         if card.color == CardColor.WILD:
             if wild_color_choice:
@@ -199,14 +205,74 @@ class GameManager:
             self._advance_turn()
 
         elif card.card_type == CardType.WILD_DRAW_FOUR:
-             next_player_idx = (self.current_player_index + (1 if self.direction == Direction.CLOCKWISE else -1)) % len(self.players)
-             victim = self.players[next_player_idx]
-             self.skipped_player = victim
-             game_logger.info(f"{victim.name} draws 4 cards and is skipped.")
-             for _ in range(4):
-                c = self.deck.draw_card()
-                if c: victim.add_card(c)
-             self._advance_turn()
+            next_player_idx = (self.current_player_index + (1 if self.direction == Direction.CLOCKWISE else -1)) % len(self.players)
+            self.pending_wild_draw_four = {
+                "actor_index": self.current_player_index,
+                "victim_index": next_player_idx,
+                "card": card,
+                "previous_color": previous_color,
+            }
+            self.last_challenge_result = None
+
+    def resolve_pending_wild_draw_four(self):
+        """Resolve pending +4 challenge if exists. Returns 'Succeeded', 'Failed', or None."""
+        if not self.pending_wild_draw_four:
+            return None
+
+        info = self.pending_wild_draw_four
+        self.pending_wild_draw_four = None
+
+        actor = self.players[info["actor_index"]]
+        victim = self.players[info["victim_index"]]
+        previous_color = info["previous_color"]
+        card = info["card"]
+
+        # Decide if victim challenges
+        do_challenge = False
+        if self.challenge_decider:
+            try:
+                do_challenge = bool(self.challenge_decider(victim, previous_color))
+            except Exception as e:
+                game_logger.warning(f"Challenge decider error: {e}")
+
+        # Bluff check: does actor have a card matching previous color?
+        bluff = False
+        if previous_color:
+            bluff = any(c.color == previous_color for c in actor.hand)
+
+        if do_challenge:
+            if bluff:
+                # Successful challenge: actor takes back +4 and draws 4
+                if self.deck.discard_pile:
+                    self.deck.discard_pile.pop()
+                actor.add_card(card)
+                for _ in range(4):
+                    dc = self.deck.draw_card()
+                    if dc: actor.add_card(dc)
+                self.current_color = previous_color
+                self.skipped_player = None
+                self.last_challenge_result = "Succeeded"
+                game_logger.info("Challenge successful.")
+            else:
+                # Failed challenge: victim draws 6 and is skipped
+                self.skipped_player = victim
+                for _ in range(6):
+                    dc = self.deck.draw_card()
+                    if dc: victim.add_card(dc)
+                self.last_challenge_result = "Failed"
+                game_logger.info("Challenge failed.")
+                self._advance_turn()
+        else:
+            # No challenge: victim draws 4 and is skipped
+            self.last_challenge_result = None
+            self.skipped_player = victim
+            for _ in range(4):
+                dc = self.deck.draw_card()
+                if dc: victim.add_card(dc)
+            game_logger.info("No challenge.")
+            self._advance_turn()
+
+        return self.last_challenge_result
 
     def draw_card_action(self, player: Player):
         """Current player draws a card (voluntarily or forced if cannot play)."""

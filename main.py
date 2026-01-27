@@ -19,6 +19,24 @@ def print_interactive_msg(msg: str):
     padding = max(0, total_len - len(plain_msg))
     print(f"{msg}{'-' * padding}")
 
+
+def human_challenge_decider(victim, previous_color):
+    """Return True if human victim chooses to challenge +4."""
+    if getattr(victim, "player_type", None) != PlayerType.HUMAN:
+        return False
+    print_interactive_msg("[Challenge +4?]{1. Yes, 2. No}")
+    while True:
+        try:
+            user_input = input("Input:")
+            choice = int(user_input)
+            if choice == 1:
+                return True
+            if choice == 2:
+                return False
+            print_interactive_msg("[Illegal Input]")
+        except ValueError:
+            print_interactive_msg("[Illegal Input]")
+
 def main():
     # Start logging session
     log_path = game_logger.start_game_session()
@@ -33,6 +51,8 @@ def main():
 
     # 2. Initialize Game
     gm = GameManager(players)
+    # Hook challenge decider for +4
+    gm.challenge_decider = human_challenge_decider
     start_card = gm.start_game()
     
     # Header
@@ -232,6 +252,13 @@ def main():
         c_str = f"{current_color_str}{c_pad}"
         
         print(f"{p_str} | {a_str} | {h_str} | {c_str}")
+
+        # Resolve +4 challenge after action output (if pending)
+        challenge_result = gm.resolve_pending_wild_draw_four()
+        if challenge_result == "Succeeded":
+            print_interactive_msg("[Challenge Succeeded]")
+        elif challenge_result == "Failed":
+            print_interactive_msg("[Challenge Failed]")
 
         if gm.skipped_player:
             sp_str = f"{gm.skipped_player.name:-<25}"
