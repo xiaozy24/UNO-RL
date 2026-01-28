@@ -35,7 +35,13 @@ class Card:
     def __repr__(self) -> str:
         return f"Card(color={self.color}, type={self.card_type}, value={self.value})"
 
+    def __eq__(self, other):
+        if not isinstance(other, Card):
+            return False
+        return self.color == other.color and self.card_type == other.card_type and self.value == other.value
+
     def is_match(self, other_card: 'Card') -> bool:
+
         """
         Check if this card matches another card (e.g., top of the discard pile).
         

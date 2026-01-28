@@ -18,7 +18,7 @@ def main():
     comm = Communicator()
     
     # 2. Setup Game (1 Human, 3 Bots)
-    p1 = Player(0, "You", PlayerType.HUMAN)
+    p1 = Player(0, "You", PlayerType.RL)
     p2 = Player(1, "Bot-A", PlayerType.AI)
     p3 = Player(2, "Bot-B", PlayerType.AI)
     p4 = Player(3, "Bot-C", PlayerType.AI)
