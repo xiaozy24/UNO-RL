@@ -1,0 +1,96 @@
+import time
+import random
+from backend.player import Player
+from backend.game_manager import GameManager
+from config.enums import PlayerType, CardColor
+from communicator.communicator import Communicator
+from communicator.comm_event import UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent
+
+def backend_main_loop(comm: Communicator, game_manager: GameManager, human_player_id: int):
+    gm = game_manager
+    gm.start_game()
+    
+    human = next((p for p in gm.players if p.player_id == human_player_id), None)
+    if human:
+        comm.send_to_frontend(UpdateHandEvent(human.hand))
+    
+    while not gm.game_over:
+        current_player = gm.get_current_player()
+        top_card = gm.deck.peek_discard_pile()
+        
+        color_info = ""
+        if gm.current_color:
+             color_info = f"Current Color: {gm.current_color.value}"
+        else:
+             color_info = f"Top Card Color: {top_card.color.value if top_card else 'None'}"
+             
+        msg = f"Turn: {current_player.name}. {color_info}"
+        comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, msg))
+        
+        if human and current_player.player_id == human.player_id: 
+             comm.send_to_frontend(UpdateHandEvent(human.hand))
+
+        time.sleep(0.5)
+
+        if current_player.player_type == PlayerType.HUMAN:
+            comm.send_to_frontend(AskMoveEvent())
+            
+            valid_move_made = False
+            while not valid_move_made and not gm.game_over:
+                event = comm.ftb_queue.get()
+                name = getattr(event, "my_event_name", type(event).__name__)
+                
+                if name == "DrawCardEvent":
+                     card = gm.deck.draw_card()
+                     if card:
+                         current_player.add_card(card)
+                         comm.send_to_frontend(UpdateHandEvent(current_player.hand))
+                         gm._advance_turn()
+                         valid_move_made = True
+                     else:
+                         gm._advance_turn()
+                         valid_move_made = True
+                         
+                elif name == "PlayCardEvent":
+                     idx = event.card_index
+                     if 0 <= idx < len(current_player.hand):
+                         card = current_player.hand[idx]
+                         
+                         choice = event.color_choice
+                         if not choice and card.color == CardColor.WILD:
+                             choice = CardColor.RED # Default fallback
+                             
+                         if gm.play_card(current_player, card, choice):
+                             valid_move_made = True
+                             comm.send_to_frontend(UpdateHandEvent(current_player.hand))
+                         else:
+                             comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, "Illegal Move! Try again."))
+                             comm.send_to_frontend(AskMoveEvent())
+                     else:
+                         pass
+        else:
+            # AI Logic
+            played = False
+            for card in current_player.hand:
+                if gm.check_legal_play(card, top_card):
+                    choice = random.choice([CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW])
+                    if gm.play_card(current_player, card, choice):
+                        played = True
+                        break
+            
+            if not played:
+                card = gm.deck.draw_card()
+                if card:
+                    current_player.add_card(card)
+                    if gm.check_legal_play(card, top_card):
+                         choice = random.choice([CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW])
+                         gm.play_card(current_player, card, choice)
+                    else:
+                         gm._advance_turn()
+                else:
+                    gm._advance_turn()
+            
+            time.sleep(1)
+
+    winner_name = gm.winner.name if gm.winner else "Nobody"
+    comm.send_to_frontend(UpdateStateEvent(top_card, -1, f"Game Over! Winner: {winner_name}"))
