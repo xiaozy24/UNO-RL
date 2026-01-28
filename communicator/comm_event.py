@@ -150,3 +150,14 @@ class ChallengeResponseEvent(CommEvent):
     def __init__(self, challenge: bool):
         super().__init__()
         self.challenge = challenge
+
+class AskPlayDrawnCardEvent(CommEvent):
+    def __init__(self, card: Card):
+        super().__init__()
+        self.card = card
+
+class PlayDrawnCardResponseEvent(CommEvent):
+    def __init__(self, play: bool, color_choice: CardColor = None):
+        super().__init__()
+        self.play = play
+        self.color_choice = color_choice

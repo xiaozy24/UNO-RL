@@ -4,7 +4,7 @@ from backend.player import Player
 from backend.game_manager import GameManager
 from config.enums import PlayerType, CardColor
 from communicator.communicator import Communicator
-from communicator.comm_event import UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, AskChallengeEvent, ChallengeResponseEvent
+from communicator.comm_event import UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, AskChallengeEvent, ChallengeResponseEvent, AskPlayDrawnCardEvent, PlayDrawnCardResponseEvent
 
 def make_challenge_decider(comm: Communicator, human_pid: int):
     def decider(victim, previous_color):
@@ -68,8 +68,34 @@ def backend_main_loop(comm: Communicator, game_manager: GameManager, human_playe
                      if card:
                          current_player.add_card(card)
                          comm.send_to_frontend(UpdateHandEvent(current_player.hand))
-                         gm._advance_turn()
-                         valid_move_made = True
+                         
+                         # Check if playable
+                         if gm.check_legal_play(card, top_card):
+                             comm.send_to_frontend(AskPlayDrawnCardEvent(card))
+                             
+                             valid_response = False
+                             while not valid_response:
+                                 resp = comm.ftb_queue.get()
+                                 r_name = getattr(resp, "my_event_name", type(resp).__name__)
+                                 if r_name == "PlayDrawnCardResponseEvent":
+                                     if resp.play:
+                                         choice = resp.color_choice
+                                         # Logic to ensure proper play
+                                         if gm.play_card(current_player, card, choice):
+                                             comm.send_to_frontend(UpdateHandEvent(current_player.hand))
+                                             valid_move_made = True
+                                         else:
+                                             # Valid check passed earlier, so this is rare.
+                                             # Maybe state changed or bug.
+                                             gm._advance_turn()
+                                             valid_move_made = True
+                                     else:
+                                         gm._advance_turn()
+                                         valid_move_made = True
+                                     valid_response = True
+                         else:
+                             gm._advance_turn()
+                             valid_move_made = True
                      else:
                          gm._advance_turn()
                          valid_move_made = True

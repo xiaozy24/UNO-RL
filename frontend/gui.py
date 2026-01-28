@@ -1,8 +1,9 @@
 import pygame
 import sys
 import threading
+import re
 from communicator.communicator import Communicator
-from communicator.comm_event import CommEvent, UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, ChallengeResponseEvent
+from communicator.comm_event import CommEvent, UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, ChallengeResponseEvent, AskChallengeEvent, AskPlayDrawnCardEvent, PlayDrawnCardResponseEvent
 from frontend.gui_assets import AssetManager
 from backend.card import Card
 from config.enums import CardColor, CardType
@@ -11,6 +12,14 @@ SCREEN_WIDTH, SCREEN_HEIGHT = 1000, 700
 FPS = 30
 CARD_WIDTH = 80
 CARD_HEIGHT = 120
+
+ANSWER_DRAWN_COLOR_MAP = {
+    CardColor.RED: (200, 30, 30), 
+    CardColor.BLUE: (30, 30, 200),
+    CardColor.GREEN: (30, 200, 30),
+    CardColor.YELLOW: (200, 200, 0),
+    CardColor.WILD: (0, 0, 0)
+}
 
 class UNOGUI:
     def __init__(self, comm: Communicator, player_id: int):
@@ -33,10 +42,19 @@ class UNOGUI:
         self.challenging = False # State flag for challenge UI
         self.yes_rect = None
         self.no_rect = None
+        
+        # Color Picker State
+        self.picking_color = False
+        self.color_picker_rects = [] # (rect, color_enum)
+        self.color_pick_callback = None # Function to call with selected color
+
+        # Drawn Card Play State
+        self.answering_drawn = False
+        self.drawn_card_obj = None # Valid Card object
     
     def run(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption(f"UNO-RL Player {self.player_id}")
         self.clock = pygame.time.Clock()
         
@@ -77,6 +95,25 @@ class UNOGUI:
                 elif event_name == "AskChallengeEvent":
                     self.challenging = True
                     self.message = f"Challenge {event.victim_name}'s +4?" # victim_name was sent
+                
+                elif event_name == "AskPlayDrawnCardEvent":
+                    self.answering_drawn = True
+                    self.drawn_card_obj = event.card
+                    
+                    # Format card name
+                    c_str = str(event.card)
+                    # Strip ANSI codes
+                    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                    c_str = ansi_escape.sub('', c_str)
+                    
+                    formatted_name = c_str.replace("Draw Two", "+2").replace("Draw Four", "+4").replace("Reverse", "~").replace("Skip", "!")
+                    
+                    c_rgb = ANSWER_DRAWN_COLOR_MAP.get(event.card.color, (0,0,0))
+                    # Handle Wild +4 which might be WILD color
+                    if event.card.color == CardColor.WILD:
+                        c_rgb = (0, 0, 0)
+
+                    self.message = [("You drew ", (0,0,0)), (formatted_name, c_rgb), (". Play it?", (0,0,0))]
                     
             except Exception as e:
                 print(f"Error processing event: {e}")
@@ -86,36 +123,95 @@ class UNOGUI:
             if event.type == pygame.QUIT:
                 self.running = False
                 self.comm.stop()
+            elif event.type == pygame.VIDEORESIZE:
+                self.screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:
                     pos = pygame.mouse.get_pos()
-                    if self.challenging:
+                    if self.picking_color:
+                        self._check_color_click(pos)
+                    elif self.answering_drawn:
+                        self._check_drawn_click(pos)
+                    elif self.challenging:
                         self._check_challenge_click(pos)
                     elif self.my_turn:
                         self._check_click(pos)
 
+    def _check_color_click(self, pos):
+        for rect, color in self.color_picker_rects:
+            if rect.collidepoint(pos):
+                print(f"Picked Color: {color.value}")
+                self.picking_color = False
+                if self.color_pick_callback:
+                    self.color_pick_callback(color)
+                    self.color_pick_callback = None
+                return
+
+    def _check_drawn_click(self, pos):
+        # We reuse loop logic or draw logic for yes/no buttons position
+        # Positions: Center screen
+        w, h = self.screen.get_size()
+        dx, dy, dw, dh = w//2 - 150, h//2 - 100, 300, 200
+        yes_rect = pygame.Rect(dx + 30, dy + 120, 100, 50)
+        no_rect = pygame.Rect(dx + 170, dy + 120, 100, 50)
+        
+        if yes_rect.collidepoint(pos):
+             print("Play Drawn Card: YES")
+             # Check if Wild
+             if self.drawn_card_obj.color == CardColor.WILD:
+                 self.answering_drawn = False
+                 self.picking_color = True
+                 self.message = "Pick Color for Wild..."
+                 self.color_pick_callback = lambda c: self.comm.send_to_backend(PlayDrawnCardResponseEvent(True, c))
+             else:
+                 self.comm.send_to_backend(PlayDrawnCardResponseEvent(True))
+                 self.answering_drawn = False
+                 self.message = "Waiting..."
+        elif no_rect.collidepoint(pos):
+             print("Play Drawn Card: NO")
+             self.comm.send_to_backend(PlayDrawnCardResponseEvent(False))
+             self.answering_drawn = False
+             self.message = "Waiting..."
+
     def _check_challenge_click(self, pos):
-        if self.yes_rect and self.yes_rect.collidepoint(pos):
+        # Dynamic center rects calculation needed if positions are dynamic
+        w, h = self.screen.get_size()
+        dx, dy, dw, dh = w//2 - 150, h//2 - 100, 300, 200
+        yes_rect = pygame.Rect(dx + 30, dy + 120, 100, 50)
+        no_rect = pygame.Rect(dx + 170, dy + 120, 100, 50)
+
+        if yes_rect.collidepoint(pos):
              print("Challenge: YES")
              self.comm.send_to_backend(ChallengeResponseEvent(True))
              self.challenging = False
              self.message = "Waiting..."
-        elif self.no_rect and self.no_rect.collidepoint(pos):
+        elif no_rect.collidepoint(pos):
              print("Challenge: NO")
              self.comm.send_to_backend(ChallengeResponseEvent(False))
              self.challenging = False
              self.message = "Waiting..."
 
     def _check_click(self, pos):
+        w, h = self.screen.get_size()
+        
         # Check Skip Button
-        if self.skip_rect and self.skip_rect.collidepoint(pos):
+        # Logic must match _draw logic for Skip Button position
+        # P0 at (w - 150, h - 100). Skip at ax + 80 = w - 70.
+        ax = w - 150
+        ay = h - 100
+        bx = ax + 80
+        by = ay
+        skip_rect = pygame.Rect(0, 0, 80, 50)
+        skip_rect.center = (bx, by)
+        
+        if skip_rect.collidepoint(pos):
              print("Skipping/Drawing...")
              self.comm.send_to_backend(DrawCardEvent())
              self.my_turn = False
              return
 
         # Check Draw Pile
-        cx, cy = SCREEN_WIDTH//2, SCREEN_HEIGHT//2 - 60
+        cx, cy = w//2, h//2 - 60
         draw_rect = pygame.Rect(cx + 100, cy, CARD_WIDTH, CARD_HEIGHT)
         if draw_rect.collidepoint(pos):
              print("Drawing card...")
@@ -127,13 +223,22 @@ class UNOGUI:
         for rect, index in reversed(self.card_rects):
             if rect.collidepoint(pos):
                 print(f"Clicked card index {index}")
-                # Default RED for Wild for now
-                self.comm.send_to_backend(PlayCardEvent(index, CardColor.RED)) 
+                
+                # Check for Wild to trigger picker
+                clicked_card = self.hand[index]
+                if clicked_card.color == CardColor.WILD:
+                    self.picking_color = True
+                    self.message = "Pick Color..."
+                    self.color_pick_callback = lambda c: self.comm.send_to_backend(PlayCardEvent(index, c))
+                else:
+                    self.comm.send_to_backend(PlayCardEvent(index, CardColor.RED)) 
+                
                 self.my_turn = False
                 return
 
     def _draw(self):
         self.screen.fill((240, 234, 224)) # Zhuguosha Background Color
+        w, h = self.screen.get_size()
         
         player_img = AssetManager.get_instance().player_image
         if not player_img:
@@ -143,10 +248,10 @@ class UNOGUI:
         # 4 Players: Bottom(0), Right(1), Top(2), Left(3)
         # Using fixed layout based on screen size
         positions = {
-            0: (SCREEN_WIDTH - 150, SCREEN_HEIGHT - 100),      # P0 (Self) - Shifted Right
-            1: (SCREEN_WIDTH - 80, SCREEN_HEIGHT // 2),        # P1
-            2: (SCREEN_WIDTH // 2, 80),                        # P2
-            3: (80, SCREEN_HEIGHT // 2)                        # P3
+            0: (w - 150, h - 100),       # P0 (Self) - Shifted Right
+            1: (w - 80, h // 2),        # P1
+            2: (w // 2, 120),                        # P2 - Moved down (was 80)
+            3: (80, h // 2)                        # P3
         }
         
         font = AssetManager.get_instance().font
@@ -185,7 +290,7 @@ class UNOGUI:
                 self.screen.blit(text, text_rect)
 
         # Draw Top Card
-        cx, cy = SCREEN_WIDTH//2 - 40, SCREEN_HEIGHT//2 - 60
+        cx, cy = w//2 - 40, h//2 - 60
         if self.top_card:
             img = AssetManager.get_instance().get_card_image(self.top_card)
             self.screen.blit(img, (cx, cy))
@@ -208,8 +313,8 @@ class UNOGUI:
             # Moving hand up to y = SCREEN_HEIGHT - 160
             
             total_width = len(self.hand) * 50 + CARD_WIDTH
-            start_x = (SCREEN_WIDTH - total_width) // 2
-            y = SCREEN_HEIGHT - 140
+            start_x = (w - total_width) // 2
+            y = h - 140
             
             for i, card in enumerate(self.hand):
                 x = start_x + i * 50
@@ -222,7 +327,9 @@ class UNOGUI:
         if self.my_turn:
             # Position to the right of self avatar
             ax, ay = positions[0]
-            bx = ax + 150
+            # Moved slightly left (closer to avatar or left of it?) 
+            # Previous was ax + 150. Reduced to ax + 80.
+            bx = ax + 80 
             by = ay
             
             box_surf = pygame.Surface((80, 50))
@@ -240,39 +347,90 @@ class UNOGUI:
         # Draw Challenge UI
         self.yes_rect = None
         self.no_rect = None
-        if self.challenging:
+        if self.challenging or self.answering_drawn:
             # overlay
-            s = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            s = pygame.Surface((w, h), pygame.SRCALPHA)
             s.fill((0,0,0,128))
             self.screen.blit(s, (0,0))
             
             # Dialog Box
-            dx, dy, dw, dh = SCREEN_WIDTH//2 - 150, SCREEN_HEIGHT//2 - 100, 300, 200
+            dx, dy, dw, dh = w//2 - 150, h//2 - 100, 300, 200
             pygame.draw.rect(self.screen, (255, 255, 255), (dx, dy, dw, dh))
             
             if font:
-                 msg = font.render(self.message, True, (0,0,0))
-                 self.screen.blit(msg, msg.get_rect(center=(dx+dw//2, dy+50)))
+                 if isinstance(self.message, list):
+                     total_w = sum(font.size(t)[0] for t, c in self.message)
+                     h = font.get_height()
+                     curr_x = dx + (dw - total_w) // 2
+                     y = dy + 50 - h // 2
+                     for t, c in self.message:
+                         s = font.render(t, True, c)
+                         self.screen.blit(s, (curr_x, y))
+                         curr_x += s.get_width()
+                 else:
+                     msg_color = (0,0,0)
+                     msg = font.render(self.message, True, msg_color)
+                     self.screen.blit(msg, msg.get_rect(center=(dx+dw//2, dy+50)))
                  
             # Yes Button
             self.yes_rect = pygame.Rect(dx + 30, dy + 120, 100, 50)
             pygame.draw.rect(self.screen, (0, 200, 0), self.yes_rect) # Green
             if font:
-                 t = font.render("Challenge", True, (0,0,0))
+                 label = "Yes" if self.answering_drawn else "Challenge"
+                 t = font.render(label, True, (0,0,0))
                  self.screen.blit(t, t.get_rect(center=self.yes_rect.center))
                  
             # No Button
             self.no_rect = pygame.Rect(dx + 170, dy + 120, 100, 50)
             pygame.draw.rect(self.screen, (200, 0, 0), self.no_rect) # Red
             if font:
-                 t = font.render("Pass", True, (0,0,0))
+                 label = "No" if self.answering_drawn else "Pass"
+                 t = font.render(label, True, (0,0,0))
                  self.screen.blit(t, t.get_rect(center=self.no_rect.center))
+
+        # Draw Color Picker
+        if self.picking_color:
+             s = pygame.Surface((w, h), pygame.SRCALPHA)
+             s.fill((0,0,0,128))
+             self.screen.blit(s, (0,0))
+             
+             colors = [CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW]
+             color_rgb = {
+                 CardColor.RED: (200, 30, 30), 
+                 CardColor.BLUE: (30, 30, 200),
+                 CardColor.GREEN: (30, 200, 30),
+                 CardColor.YELLOW: (200, 200, 0)
+             }
+             
+             cx, cy = w//2, h//2
+             size = 100
+             offsets = [(-size-10, -size-10), (10, -size-10), (-size-10, 10), (10, 10)]
+             
+             self.color_picker_rects = []
+             
+             if font:
+                 t = font.render("Pick a Color", True, (255,255,255))
+                 self.screen.blit(t, t.get_rect(center=(cx, cy-150)))
+             
+             for i, c in enumerate(colors):
+                 ox, oy = offsets[i]
+                 rect = pygame.Rect(cx + ox, cy + oy, size, size)
+                 pygame.draw.rect(self.screen, color_rgb[c], rect)
+                 self.color_picker_rects.append((rect, c))
 
 
         # Draw Message
         if AssetManager.get_instance().font:
-            text = AssetManager.get_instance().font.render(self.message, True, (0, 0, 0)) # Black text on light bg
-            self.screen.blit(text, (20, 20))
+            font = AssetManager.get_instance().font
+            if isinstance(self.message, list):
+                curr_x, y = 20, 20
+                for t, c in self.message:
+                    s = font.render(t, True, c)
+                    self.screen.blit(s, (curr_x, y))
+                    curr_x += s.get_width()
+            else:
+                text = font.render(self.message, True, (0, 0, 0)) # Black text on light bg
+                self.screen.blit(text, (20, 20))
             
             info = f"Current Player: {self.current_player_idx}"
             if self.my_turn: info += " (YOU)"
