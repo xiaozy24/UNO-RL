@@ -162,3 +162,19 @@ class PlayDrawnCardResponseEvent(CommEvent):
         super().__init__()
         self.play = play
         self.color_choice = color_choice
+
+class PlayerPlayedCardEvent(CommEvent):
+    def __init__(self, player_id: int, card: Card):
+        super().__init__()
+        self.player_id = player_id
+        self.card = card
+
+class PlayerDrewCardEvent(CommEvent):
+    def __init__(self, player_id: int, count: int):
+        super().__init__()
+        self.player_id = player_id
+        self.count = count
+
+class AnimationCompleteEvent(CommEvent):
+    def __init__(self):
+        super().__init__()

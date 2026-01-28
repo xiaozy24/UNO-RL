@@ -23,6 +23,10 @@ class GameManager:
         self.challenge_decider = None
         self.pending_wild_draw_four = None
         self.last_challenge_result = None
+        
+        # Callbacks for animations (Blocking)
+        self.on_play_card_animation = None # fn(player_id, card)
+        self.on_draw_card_animation = None # fn(player_id, count=1)
 
     def start_game(self):
         """Initialize game state, deal cards."""
@@ -61,6 +65,14 @@ class GameManager:
 
         return start_card # Return start_card so main can display it
 
+    def _perform_single_draw(self, player: Player):
+        """Helper to draw one card, animate it, then add to hand."""
+        c = self.deck.draw_card()
+        if c:
+            player.add_card(c)
+            if self.on_draw_card_animation:
+                self.on_draw_card_animation(player.player_id, 1)
+
     def _handle_initial_card_effect(self, card: Card):
         if card.card_type == CardType.SKIP:
             game_logger.info("First player skipped!")
@@ -81,9 +93,8 @@ class GameManager:
             # First player draws 2 and turn skipped
             target = self.players[self.current_player_index]
             game_logger.info(f"{target.name} must draw 2 cards due to start card!")
-            cards = [self.deck.draw_card() for _ in range(2)]
-            for c in cards: 
-                if c: target.add_card(c)
+            for _ in range(2):
+                self._perform_single_draw(target)
             self._advance_turn()
 
     def get_current_player(self) -> Player:
@@ -141,6 +152,10 @@ class GameManager:
         player.remove_card(card)
         self.deck.discard(card)
         game_logger.info(f"{player.name} played {card}.")
+        
+        # Blocking Animation Call
+        if self.on_play_card_animation:
+            self.on_play_card_animation(player.player_id, card)
 
         # Check UNO status
         if player.get_hand_size() == 1:
@@ -158,10 +173,15 @@ class GameManager:
         # Update State based on Card
         previous_color = self.current_color
         self._apply_card_effect(card, wild_color_choice, previous_color)
+
+        # Resolve +4 Challenge immediately if applicable
+        if self.pending_wild_draw_four:
+            self.resolve_pending_wild_draw_four()
         
         # Next Turn
         self._advance_turn()
         return True
+
 
     def _apply_card_effect(self, card: Card, wild_color_choice: CardColor, previous_color: CardColor):
         # Update current color
@@ -199,8 +219,7 @@ class GameManager:
             self.skipped_player = victim
             game_logger.info(f"{victim.name} draws 2 cards and is skipped.")
             for _ in range(2):
-                c = self.deck.draw_card()
-                if c: victim.add_card(c)
+                self._perform_single_draw(victim)
             # Skip the victim
             self._advance_turn()
 
@@ -247,8 +266,7 @@ class GameManager:
                     self.deck.discard_pile.pop()
                 actor.add_card(card)
                 for _ in range(4):
-                    dc = self.deck.draw_card()
-                    if dc: actor.add_card(dc)
+                    self._perform_single_draw(actor)
                 self.current_color = previous_color
                 self.skipped_player = None
                 self.last_challenge_result = "Succeeded"
@@ -257,8 +275,7 @@ class GameManager:
                 # Failed challenge: victim draws 6 and is skipped
                 self.skipped_player = victim
                 for _ in range(6):
-                    dc = self.deck.draw_card()
-                    if dc: victim.add_card(dc)
+                    self._perform_single_draw(victim)
                 self.last_challenge_result = "Failed"
                 game_logger.info("Challenge failed.")
                 self._advance_turn()
@@ -267,8 +284,7 @@ class GameManager:
             self.last_challenge_result = None
             self.skipped_player = victim
             for _ in range(4):
-                dc = self.deck.draw_card()
-                if dc: victim.add_card(dc)
+                self._perform_single_draw(victim)
             game_logger.info("No challenge.")
             self._advance_turn()
 

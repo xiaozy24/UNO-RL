@@ -3,7 +3,7 @@ import sys
 import threading
 import re
 from communicator.communicator import Communicator
-from communicator.comm_event import CommEvent, UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, ChallengeResponseEvent, AskChallengeEvent, AskPlayDrawnCardEvent, PlayDrawnCardResponseEvent
+from communicator.comm_event import CommEvent, UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, ChallengeResponseEvent, AskChallengeEvent, AskPlayDrawnCardEvent, PlayDrawnCardResponseEvent, AnimationCompleteEvent
 from frontend.gui_assets import AssetManager
 from backend.card import Card
 from config.enums import CardColor, CardType
@@ -12,6 +12,38 @@ SCREEN_WIDTH, SCREEN_HEIGHT = 1000, 700
 FPS = 30
 CARD_WIDTH = 80
 CARD_HEIGHT = 120
+
+class GUIAnimation:
+    def __init__(self, img, start_pos, end_pos, duration=15, on_complete=None): # duration in frames
+        self.img = img
+        self.start_pos = start_pos
+        self.end_pos = end_pos
+        self.duration = duration
+        self.current_frame = 0
+        self.finished = False
+        self.on_complete = on_complete
+    
+    def update(self):
+        # Allow one-time completion trigger
+        if self.finished: return 
+
+        self.current_frame += 1
+        if self.current_frame >= self.duration:
+            self.finished = True
+            if self.on_complete:
+                self.on_complete()
+            
+    def draw(self, screen):
+        t = self.current_frame / self.duration
+        # Linear interpolation
+        # start_pos is center or top-left? 
+        # Usually positions are centers or top-lefts. 
+        # In _draw, player positions are centers usually? 
+        # let's assume passed positions are Top-Left for blit.
+        
+        x = self.start_pos[0] + (self.end_pos[0] - self.start_pos[0]) * t
+        y = self.start_pos[1] + (self.end_pos[1] - self.start_pos[1]) * t
+        screen.blit(self.img, (x, y))
 
 ANSWER_DRAWN_COLOR_MAP = {
     CardColor.RED: (200, 30, 30), 
@@ -30,7 +62,14 @@ class UNOGUI:
         self.clock = None
         
         self.hand = [] # List of Card objects
-        self.top_card = None # Card object
+        self.top_card = None # Card object (Visual)
+        self.active_color = None # Current active color (Visual)
+        
+        self.server_top_card = None # Real backend state
+        self.server_active_color = None # Real backend state
+        self.server_hand = [] # Buffered Hand
+        self.server_hand_counts = {} # Buffered Hand Counts
+        
         self.current_player_idx = -1
         self.message = "Waiting for game start..."
         self.my_turn = False
@@ -52,7 +91,8 @@ class UNOGUI:
         self.answering_drawn = False
         self.drawn_card_obj = None # Valid Card object
         self.active_color = None # Current active color on the board
-    
+        self.animations = [] # List of GUIAnimation objects
+
     def run(self):
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
@@ -78,17 +118,108 @@ class UNOGUI:
                 event_name = getattr(event, "my_event_name", type(event).__name__)
                 
                 if event_name == "UpdateHandEvent":
-                    self.hand = event.hand
+                    self.server_hand = event.hand
+                    if not self.animations:
+                         self.hand = self.server_hand
+
                 elif event_name == "UpdateStateEvent":
-                    self.top_card = event.top_card
+                    self.server_top_card = event.top_card
+                    self.server_active_color = getattr(event, "active_color", None)
+                    self.server_hand_counts = getattr(event, "hand_counts", {})
+                    
                     self.current_player_idx = event.current_player_index
                     self.message = event.msg
                     # Reset turn state if it's not me anymore
                     if self.current_player_idx != self.player_id:
                         self.my_turn = False
-                    self.hand_counts = getattr(event, "hand_counts", {})
-                    self.active_color = getattr(event, "active_color", None)
+                    
+                    # Only update visual state if no animations are running
+                    if not self.animations:
+                         self.top_card = self.server_top_card
+                         self.active_color = self.server_active_color
+                         self.hand_counts = self.server_hand_counts
                 
+                elif event_name == "PlayerPlayedCardEvent":
+                    try:
+                        pid = event.player_id
+                        card = event.card
+                        
+                        if self.screen:
+                            w, h = self.screen.get_size()
+                            # Same positions map as _draw
+                            positions = {
+                                0: (w - 150, h - 100),
+                                1: (w - 80, h // 2),
+                                2: (w // 2, 120),
+                                3: (80, h // 2)
+                            }
+                            v_idx = (pid - self.player_id) % 4
+                            start_center = positions.get(v_idx, (0,0))
+                            
+                            sx = start_center[0] - CARD_WIDTH // 2
+                            sy = start_center[1] - CARD_HEIGHT // 2
+                            ex = w // 2 - CARD_WIDTH // 2
+                            ey = h // 2 - CARD_HEIGHT // 2
+                            
+                            img = AssetManager.get_instance().get_card_image(card)
+                            
+                            def on_landed():
+                                # Force visual update to this card when it lands
+                                self.top_card = card
+                                # If server already sent newer state, sync to it
+                                if self.server_top_card:
+                                     # If the server top card is different (e.g. +4 resolved?), verify.
+                                     # But usually it waits.
+                                     # We trust the animation card is the top card at this moment.
+                                     pass
+                                # Sync active color if we have server knowledge, otherwise hold
+                                if self.server_active_color:
+                                     self.active_color = self.server_active_color
+                                else:
+                                     # If no server update yet, active_color might be stale? 
+                                     # Or logic: top card changed -> color usually top card color.
+                                     pass
+                                self.comm.send_to_backend(AnimationCompleteEvent())
+
+                            self.animations.append(GUIAnimation(img, (sx, sy), (ex, ey), duration=15, on_complete=on_landed))
+                    except Exception as e:
+                        print(f"Anim error: {e}")
+
+                elif event_name == "PlayerDrewCardEvent":
+                    try:
+                        pid = event.player_id
+                        # count = event.count # Not used visually except maybe multiple animations?
+                        
+                        if self.screen:
+                            w, h = self.screen.get_size()
+                            positions = {
+                                0: (w - 150, h - 100),
+                                1: (w - 80, h // 2),
+                                2: (w // 2, 120),
+                                3: (80, h // 2)
+                            }
+                            v_idx = (pid - self.player_id) % 4
+                            target_center = positions.get(v_idx, (0,0))
+                            
+                            # Start from Center Deck
+                            sx = w // 2 + 100 # Offset of Draw Pile
+                            sy = h // 2 - 60
+                            ex = target_center[0] - CARD_WIDTH // 2
+                            ey = target_center[1] - CARD_HEIGHT // 2
+                            
+                            img = AssetManager.get_instance().back_image
+                            
+                            def on_landed():
+                                # Commit Buffered State
+                                self.hand = self.server_hand
+                                self.hand_counts = self.server_hand_counts
+                                self.comm.send_to_backend(AnimationCompleteEvent())
+
+                            self.animations.append(GUIAnimation(img, (sx, sy), (ex, ey), duration=15, on_complete=on_landed))
+
+                    except Exception as e:
+                        print(f"Draw Anim error: {e}")
+
                 elif event_name == "AskMoveEvent":
                     if self.current_player_idx == self.player_id:
                         self.my_turn = True
@@ -330,6 +461,15 @@ class UNOGUI:
                 self.screen.blit(img, (x, y))
                 self.card_rects.append((pygame.Rect(x, y, CARD_WIDTH, CARD_HEIGHT), i))
         
+        # Draw Animations
+        # Iterate backwards to remove safely
+        for anim in self.animations[:]:
+            anim.update()
+            if anim.finished:
+                self.animations.remove(anim)
+            else:
+                anim.draw(self.screen)
+
         # Draw Skip Button
         self.skip_rect = None
         if self.my_turn:
@@ -444,5 +584,20 @@ class UNOGUI:
             if self.my_turn: info += " (YOU)"
             info_text = AssetManager.get_instance().font.render(info, True, (255, 0, 0) if self.my_turn else (100, 100, 100))
             self.screen.blit(info_text, (20, 50))
+
+        # Game Over Overlay
+        if "Game Over" in self.message and AssetManager.get_instance().font:
+             font = AssetManager.get_instance().font
+             s = pygame.Surface((w, h), pygame.SRCALPHA)
+             s.fill((0, 0, 0, 200)) # Dark semi-transparent
+             self.screen.blit(s, (0,0))
+             
+             text = font.render(self.message, True, (255, 215, 0)) # Gold
+             rect = text.get_rect(center=(w//2, h//2))
+             self.screen.blit(text, rect)
+             
+             sub = font.render("Close window to exit", True, (200, 200, 200))
+             sub_rect = sub.get_rect(center=(w//2, h//2 + 50))
+             self.screen.blit(sub, sub_rect)
 
         pygame.display.flip()
