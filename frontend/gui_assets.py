@@ -59,6 +59,7 @@ class AssetManager:
         self.images[(CardColor.WILD, CardType.WILD_DRAW_FOUR, None)] = self._load(os.path.join(black_folder, "uno_black_+4.png"))
         
         self.back_image = self._load(os.path.join(ASSETS_DIR, "misc", "uno_back.png"))
+        self.player_image = self._load(os.path.join(ASSETS_DIR, "misc", "uno_player.png"))
         self.initialized = True
 
     def _load(self, path):

@@ -4,10 +4,30 @@ from backend.player import Player
 from backend.game_manager import GameManager
 from config.enums import PlayerType, CardColor
 from communicator.communicator import Communicator
-from communicator.comm_event import UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent
+from communicator.comm_event import UpdateHandEvent, UpdateStateEvent, AskMoveEvent, PlayCardEvent, DrawCardEvent, AskChallengeEvent, ChallengeResponseEvent
+
+def make_challenge_decider(comm: Communicator, human_pid: int):
+    def decider(victim, previous_color):
+        if victim.player_type != PlayerType.HUMAN:
+            # Simple AI logic: Challenge ~30%
+            return random.random() < 0.3
+        
+        # Human decision needed
+        comm.send_to_frontend(AskChallengeEvent(victim.name))
+        
+        while True:
+            event = comm.ftb_queue.get()
+            name = getattr(event, "my_event_name", type(event).__name__)
+            if name == "ChallengeResponseEvent":
+                return event.challenge
+            # Ignore other events (like duplicate plays) or re-queue them if critical
+            # Ideally we should only get ChallengeResponse here because UI mode blocks other inputs
+    
+    return decider
 
 def backend_main_loop(comm: Communicator, game_manager: GameManager, human_player_id: int):
     gm = game_manager
+    gm.challenge_decider = make_challenge_decider(comm, human_player_id)
     gm.start_game()
     
     human = next((p for p in gm.players if p.player_id == human_player_id), None)
@@ -25,7 +45,10 @@ def backend_main_loop(comm: Communicator, game_manager: GameManager, human_playe
              color_info = f"Top Card Color: {top_card.color.value if top_card else 'None'}"
              
         msg = f"Turn: {current_player.name}. {color_info}"
-        comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, msg))
+        
+        # Collect hand counts
+        hand_counts = {p.player_id: len(p.hand) for p in gm.players}
+        comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, msg, hand_counts))
         
         if human and current_player.player_id == human.player_id: 
              comm.send_to_frontend(UpdateHandEvent(human.hand))
