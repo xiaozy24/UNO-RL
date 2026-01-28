@@ -119,12 +119,13 @@ class UpdateHandEvent(CommEvent):
         self.hand = hand
 
 class UpdateStateEvent(CommEvent):
-    def __init__(self, top_card: Card, current_player_index: int, msg: str = "", hand_counts: dict = None):
+    def __init__(self, top_card: Card, current_player_index: int, msg: str = "", hand_counts: dict = None, active_color: CardColor = None):
         super().__init__()
         self.top_card = top_card
         self.current_player_index = current_player_index
         self.msg = msg
         self.hand_counts = hand_counts if hand_counts else {}
+        self.active_color = active_color
 
 class AskMoveEvent(CommEvent):
     def __init__(self, valid_moves: list = None):

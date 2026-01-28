@@ -51,6 +51,7 @@ class UNOGUI:
         # Drawn Card Play State
         self.answering_drawn = False
         self.drawn_card_obj = None # Valid Card object
+        self.active_color = None # Current active color on the board
     
     def run(self):
         pygame.init()
@@ -86,6 +87,7 @@ class UNOGUI:
                     if self.current_player_idx != self.player_id:
                         self.my_turn = False
                     self.hand_counts = getattr(event, "hand_counts", {})
+                    self.active_color = getattr(event, "active_color", None)
                 
                 elif event_name == "AskMoveEvent":
                     if self.current_player_idx == self.player_id:
@@ -298,9 +300,15 @@ class UNOGUI:
             pygame.draw.rect(self.screen, (0,0,0), (cx, cy, CARD_WIDTH, CARD_HEIGHT), 2)
             
         # Draw Draw Pile
-        back_img = AssetManager.get_instance().back_image
-        if back_img:
-            self.screen.blit(back_img, (cx + 100, cy))
+        pile_img = AssetManager.get_instance().back_image
+        # Try to show active color on the draw pile if available
+        if self.active_color and self.active_color in [CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW]:
+             alt_img = AssetManager.get_instance().get_default_card_image(self.active_color)
+             if alt_img:
+                 pile_img = alt_img
+
+        if pile_img:
+            self.screen.blit(pile_img, (cx + 100, cy))
         
         # Draw Hand
         self.card_rects = []

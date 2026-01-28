@@ -53,6 +53,9 @@ class AssetManager:
             self.images[(c_enum, CardType.SKIP, None)] = self._load(os.path.join(folder, f"uno_{c_str}_Skip.png"))
             self.images[(c_enum, CardType.REVERSE, None)] = self._load(os.path.join(folder, f"uno_{c_str}_Reverse.png"))
             self.images[(c_enum, CardType.DRAW_TWO, None)] = self._load(os.path.join(folder, f"uno_{c_str}_+2.png"))
+            
+            # Default (Generic Color)
+            self.images[(c_enum, "DEFAULT", None)] = self._load(os.path.join(folder, f"uno_{c_str}_default.png"))
 
         black_folder = os.path.join(ASSETS_DIR, "black")
         self.images[(CardColor.WILD, CardType.WILD, None)] = self._load(os.path.join(black_folder, "uno_black_wild.png"))
@@ -83,3 +86,6 @@ class AssetManager:
              
         key = (card.color, card.card_type, card.value)
         return self.images.get(key, self.back_image)
+
+    def get_default_card_image(self, color: CardColor):
+        return self.images.get((color, "DEFAULT", None), self.back_image)

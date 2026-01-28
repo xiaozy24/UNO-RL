@@ -46,9 +46,12 @@ def backend_main_loop(comm: Communicator, game_manager: GameManager, human_playe
              
         msg = f"Turn: {current_player.name}. {color_info}"
         
+        # Determine active color for GUI display
+        active_color = gm.current_color if gm.current_color else (top_card.color if top_card else None)
+        
         # Collect hand counts
         hand_counts = {p.player_id: len(p.hand) for p in gm.players}
-        comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, msg, hand_counts))
+        comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, msg, hand_counts, active_color=active_color))
         
         if human and current_player.player_id == human.player_id: 
              comm.send_to_frontend(UpdateHandEvent(human.hand))
@@ -113,7 +116,7 @@ def backend_main_loop(comm: Communicator, game_manager: GameManager, human_playe
                              valid_move_made = True
                              comm.send_to_frontend(UpdateHandEvent(current_player.hand))
                          else:
-                             comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, "Illegal Move! Try again."))
+                             comm.send_to_frontend(UpdateStateEvent(top_card, current_player.player_id, "Illegal Move! Try again.", active_color=active_color))
                              comm.send_to_frontend(AskMoveEvent())
                      else:
                          pass
