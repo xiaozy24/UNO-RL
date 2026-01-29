@@ -135,6 +135,38 @@ class RLAgentHandler:
 
         return choice == 1
 
+    def should_challenge_probabilistic(self, player, game_manager, thresholds=None):
+        """
+        Special method for challenge training.
+        Training: Sample based on probability (Softmax).
+        Testing: Argmax (Challenge if prob >= 0.5).
+        """
+        outputs, state_tensor = self._get_vals(player, game_manager)
+        chal_vals = outputs["challenge"].squeeze(0).numpy()
+        
+        # Calculate probabilities via Softmax
+        exp_scores = np.exp(chal_vals - np.max(chal_vals))
+        probs = exp_scores / np.sum(exp_scores) # [Prob(No), Prob(Yes)]
+        
+        prob_challenge = probs[1]
+        
+        if self.is_train:
+            # Sample based on probability
+            choice = np.random.choice([0, 1], p=probs)
+        else:
+            # Deterministic: >= 0.5
+            choice = 1 if prob_challenge >= 0.5 else 0
+            
+        if self.is_train:
+             self.history.append({
+                 "state": state_tensor,
+                 "head": "challenge",
+                 "action": int(choice),
+                 "challenge_success": None # Will be filled by caller
+             })
+             
+        return choice == 1, prob_challenge
+
     def should_play_drawn(self, player, game_manager, card):
         outputs, state_tensor = self._get_vals(player, game_manager)
         # Use raw logits
