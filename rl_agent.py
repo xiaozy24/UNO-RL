@@ -26,7 +26,8 @@ class RLAgentHandler:
 
     def select_card(self, player, game_manager, legal_cards):
         outputs, state_tensor = self._get_vals(player, game_manager)
-        card_vals = torch.sigmoid(outputs["card"]).squeeze(0).numpy()
+        # Use raw logits (Q-values), no Sigmoid
+        card_vals = outputs["card"].squeeze(0).numpy()
         
         candidates = {} 
         for c in legal_cards:
@@ -35,19 +36,28 @@ class RLAgentHandler:
             candidates[idx].append(c)
             
         valid_indices = list(candidates.keys())
-        scores = card_vals[valid_indices]
+        scores = card_vals[valid_indices] # These can be negative now
         
         if len(scores) == 0: return None 
         
         if self.is_train:
-            total = np.sum(scores)
-            if total < 1e-9: probs = np.ones_like(scores) / len(scores)
-            else: probs = scores / total
-            chosen_type_idx = np.random.choice(valid_indices, p=probs)
+            # 50% Greedy, 50% Softmax Sampling
+            if random.random() < 0.5:
+                # Greedy
+                max_score = np.max(scores)
+                best_indices = [valid_indices[i] for i, s in enumerate(scores) if s == max_score]
+                chosen_type_idx = random.choice(best_indices)
+            else:
+                # Softmax Sampling
+                # Subtract max for numerical stability
+                exp_scores = np.exp(scores - np.max(scores))
+                probs = exp_scores / np.sum(exp_scores)
+                chosen_type_idx = np.random.choice(valid_indices, p=probs)
         else:
             max_score = np.max(scores)
             best_indices = [valid_indices[i] for i, s in enumerate(scores) if s == max_score]
             chosen_type_idx = random.choice(best_indices)
+
         
         if self.is_train:
              self.history.append({
@@ -60,15 +70,23 @@ class RLAgentHandler:
 
     def select_color(self, player, game_manager):
         outputs, state_tensor = self._get_vals(player, game_manager)
-        color_vals = torch.sigmoid(outputs["color"]).squeeze(0).numpy()
+        # Use raw logits
+        color_vals = outputs["color"].squeeze(0).numpy()
         
         scores = color_vals
         
         if self.is_train:
-            total = np.sum(scores)
-            if total < 1e-9: probs = np.ones(4) / 4
-            else: probs = scores / total
-            chosen_idx = np.random.choice(4, p=probs)
+            # 50% Greedy, 50% Softmax Sampling
+            if random.random() < 0.5:
+                # Greedy
+                max_score = np.max(scores)
+                best_indices = [i for i, s in enumerate(scores) if s == max_score]
+                chosen_idx = random.choice(best_indices)
+            else:
+                # Softmax Sampling
+                exp_scores = np.exp(scores - np.max(scores))
+                probs = exp_scores / np.sum(exp_scores)
+                chosen_idx = np.random.choice(4, p=probs)
         else:
             max_score = np.max(scores)
             best_indices = [i for i, s in enumerate(scores) if s == max_score]
@@ -85,38 +103,56 @@ class RLAgentHandler:
 
     def should_challenge(self, player, game_manager):
         outputs, state_tensor = self._get_vals(player, game_manager)
-        chal_vals = torch.sigmoid(outputs["challenge"]).squeeze(0).numpy()
+        # Use raw logits
+        chal_vals = outputs["challenge"].squeeze(0).numpy()
         
         scores = chal_vals
         if self.is_train:
-            total = np.sum(scores)
-            if total < 1e-9: probs = np.array([0.5, 0.5])
-            else: probs = scores / total
-            choice = np.random.choice([0, 1], p=probs)
+            # 50% Greedy, 50% Softmax Sampling
+            if random.random() < 0.5:
+                # Greedy
+                max_score = np.max(scores)
+                best_indices = [i for i, s in enumerate(scores) if s == max_score]
+                choice = random.choice(best_indices)
+            else:
+                # Softmax Sampling
+                exp_scores = np.exp(scores - np.max(scores))
+                probs = exp_scores / np.sum(exp_scores)
+                choice = np.random.choice([0, 1], p=probs)
         else:
             max_score = np.max(scores)
             best_indices = [i for i, s in enumerate(scores) if s == max_score]
             choice = random.choice(best_indices)
             
+        # Store challenge attempt
         if self.is_train:
              self.history.append({
                  "state": state_tensor,
                  "head": "challenge",
-                 "action": int(choice)
+                 "action": int(choice),
+                 "challenge_success": None # Will be filled by caller if possible, or we need redesign
              })
 
         return choice == 1
 
     def should_play_drawn(self, player, game_manager, card):
         outputs, state_tensor = self._get_vals(player, game_manager)
-        pd_vals = torch.sigmoid(outputs["play_drawn"]).squeeze(0).numpy()
+        # Use raw logits
+        pd_vals = outputs["play_drawn"].squeeze(0).numpy()
         
         scores = pd_vals
         if self.is_train:
-            total = np.sum(scores)
-            if total < 1e-9: probs = np.array([0.5, 0.5])
-            else: probs = scores / total
-            choice = np.random.choice([0, 1], p=probs)
+             # 50% Greedy, 50% Softmax Sampling
+            if random.random() < 0.5:
+                # Greedy
+                max_score = np.max(scores)
+                best_indices = [i for i, s in enumerate(scores) if s == max_score]
+                choice = random.choice(best_indices)
+            else:
+                # Softmax Sampling
+                exp_scores = np.exp(scores - np.max(scores))
+                probs = exp_scores / np.sum(exp_scores)
+                choice = np.random.choice([0, 1], p=probs)
         else:
             max_score = np.max(scores)
             best_indices = [i for i, s in enumerate(scores) if s == max_score]

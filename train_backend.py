@@ -7,7 +7,14 @@ def run_game_epoch(gm: GameManager, rl_agent: RLAgentHandler):
     # Setup challenge decider
     def challenge_decider(victim, prev_color):
         if victim.player_type == PlayerType.RL:
-            return rl_agent.should_challenge(victim, gm)
+            initial_count = len(rl_agent.history)
+            choice = rl_agent.should_challenge(victim, gm)
+            
+            if len(rl_agent.history) > initial_count:
+                 # Mark the index we just added
+                 rl_agent.history[-1]["challenge_pending"] = True
+                 
+            return choice
         else:
             return random.random() < 0.3 # SimpleAI
             
@@ -21,6 +28,17 @@ def run_game_epoch(gm: GameManager, rl_agent: RLAgentHandler):
         curr_player = gm.get_current_player()
         top_card = gm.deck.peek_discard_pile()
         
+        # Check pending challenge result
+        if rl_agent.is_train and rl_agent.history:
+            last = rl_agent.history[-1]
+            if last.get("challenge_pending"):
+                outcome = gm.last_challenge_result
+                # Outcome: True = Challenger Won. False = Challenger Lost.
+                if outcome is not None and last["action"] == 1: # We Challenged
+                     last["challenge_success"] = outcome
+                
+                del last["challenge_pending"]
+
         if curr_player.player_type == PlayerType.RL:
             # 1. Check legal plays
             legal_cards = [c for c in curr_player.hand if gm.check_legal_play(c, top_card)]
@@ -56,11 +74,11 @@ def run_game_epoch(gm: GameManager, rl_agent: RLAgentHandler):
                     gm._advance_turn()
         
         else:
-            # Simple AI (Mimic main_backend_loop logic roughly)
-            # Find first legal card
+            # Simple AI (Random but valid)
             legal_cards = [c for c in curr_player.hand if gm.check_legal_play(c, top_card)]
             if legal_cards:
-                 card = legal_cards[0] 
+                 card = random.choice(legal_cards) 
+                 # Pick a valid color from enum, avoiding "WILD" string if we need concrete
                  color = random.choice([CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW])
                  gm.play_card(curr_player, card, color)
             else:
@@ -69,9 +87,11 @@ def run_game_epoch(gm: GameManager, rl_agent: RLAgentHandler):
                  if card:
                      curr_player.add_card(card)
                      if gm.check_legal_play(card, top_card):
-                         # SimpleAI plays drawn card if it can
-                         color = random.choice([CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW])
-                         gm.play_card(curr_player, card, color)
+                         if random.random() < 0.5:
+                             color = random.choice([CardColor.RED, CardColor.BLUE, CardColor.GREEN, CardColor.YELLOW])
+                             gm.play_card(curr_player, card, color)
+                         else:
+                             gm._advance_turn()
                      else:
                          gm._advance_turn()
                  else:
