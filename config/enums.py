@@ -18,6 +18,7 @@ class CardType(Enum):
 class PlayerType(Enum):
     HUMAN = "Human"
     AI = "AI"
+    RL = "RL"
 
 class Direction(Enum):
     CLOCKWISE = 1
